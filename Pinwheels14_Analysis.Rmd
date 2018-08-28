@@ -22,8 +22,13 @@ library(lmerTest)
 library(boot)
 
 # load preprocessed data
-orig.sample <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheel14_Infant_Preprocessed_RemovedOutliers.csv") 
-orig.sample$X <- NULL
+orig.sample.a <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheel14_1-10_Infant_Preprocessed_RemovedOutliers.csv")
+orig.sample.a$X <- NULL
+orig.sample.b <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheel14_11-17_Infant_Preprocessed_RemovedOutliers.csv")
+orig.sample.b$X <- NULL
+
+#combine
+orig.sample <- rbind(orig.sample.a,orig.sample.b)
 
 # excluded trial 1 of each preswitch sub-block
 orig.sample2 <- subset(orig.sample, !(switch==1 & trialnum==1))
@@ -32,13 +37,38 @@ orig.sample2 <- subset(orig.sample, !(switch==1 & trialnum==1))
 # orig.sample2 = excluded trial 1 of each preswitch sub-block
 ```
 
+Percentage of experiment completed per subject
+```{r}
+v1 <- ddply(orig.sample2,.(subID),summarise,totaltrials=length(unique(TRIAL_INDEX,na.rm = TRUE)))  
+v1$percent <- v1$totaltrials/51 #have to divide by 51, becaue original study is 48 trials, but then we split postswitch trial 1  into 2 so it's 48+3
+z <- mean(v1$percent)
+
+ggplot(v1,aes(x=factor(subID),y=percent))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_bar(stat="identity")+
+  ggtitle("Percent of experiment completed after exclusion criteria")+
+  labs(x = "Subject ID", y = "% of experiment completed (# of trials/51)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="none")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(labels = scales::percent,limits=c(0,1),breaks=seq(0,1,.1))+
+  geom_hline(yintercept = z, color="coral",size=1.5)
+
+```
+
 REMOVE BAD SUBJECTS
 ```{r}
-# babies 2,4,6,8 bad
+orig.sample2 <- subset(orig.sample2, subID != 1)
 orig.sample2 <- subset(orig.sample2, subID != 2)
 orig.sample2 <- subset(orig.sample2, subID != 4)
 orig.sample2 <- subset(orig.sample2, subID != 6)
 orig.sample2 <- subset(orig.sample2, subID != 8)
+orig.sample2 <- subset(orig.sample2, subID != 11)
+orig.sample2 <- subset(orig.sample2, subID != 15)
+orig.sample2 <- subset(orig.sample2, subID != 17)
 ```
 
 AEM coding
@@ -154,9 +184,8 @@ pupilbreakdown <- x1
 
 add in trialtype info into main DF
 Recode every trial two times
-- correct vs incorrect for AEM
+-correct vs incorrect for AEM
 -match vs mismatch for the pupil 
-
 ```{r}
 # match vs mismatch for the pupil 
 z1 <- ddply(pupilbreakdown,.(subID,trialnum,trialnum2),summarise,trialtype=(unique(type,na.rm = TRUE)))  
@@ -272,9 +301,10 @@ v.no2 <- ddply(v.no,.(subID),summarise,numoftrials=length(unique(TRIAL_INDEX,na.
 
 #create empty dataframe
 subs <- unique(orig.sample5$subID)
-moo <- data.frame(subID=numeric(18),trialtype=numeric(18),percent=numeric(18))
+z <- length(subs)*3
+moo <- data.frame(subID=numeric(z),trialtype=numeric(z),percent=numeric(z))
 moo$subID <- subs
-moo$trialtype <- rep(1:3, each = 6)
+moo$trialtype <- rep(1:3, each = length(subs))
 
 #calculate percent
 #trialtype 1 (correct)
@@ -295,9 +325,9 @@ for (j in 1:length(subs)) {
 z <- which(v.incor2$subID==subs[j])
 zz <- which(v2$subID==subs[j]) 
 if (length(z)==0) { #if doesn't match
-  moo$percent[j+6] <- NA
+  moo$percent[j+length(subs)] <- NA
 } else {
-  moo$percent[j+6] <- v.incor2$numoftrials[z] / v2$numoftrials[zz]
+  moo$percent[j+length(subs)] <- v.incor2$numoftrials[z] / v2$numoftrials[zz]
 }
 } 
 
@@ -307,14 +337,14 @@ for (j in 1:length(subs)) {
 z <- which(v.no2$subID==subs[j])
 zz <- which(v2$subID==subs[j]) 
 if (length(z)==0) { #if doesn't match
-  moo$percent[j+12] <- NA
+  moo$percent[j+length(subs)*2] <- NA
 } else {
-  moo$percent[j+12] <- v.no2$numoftrials[z] / v2$numoftrials[zz]
+  moo$percent[j+length(subs)*2] <- v.no2$numoftrials[z] / v2$numoftrials[zz]
 }} 
 
 #plot
-moo$trialtype[1:6] <- 3
-moo$trialtype[13:18] <- 1
+moo$trialtype[1:length(subs)] <- 3
+moo$trialtype[(length(subs)*2+1):(length(subs)*3)] <- 1
 moo[is.na(moo)] <- 0 #replace NA with 0, to get rid of warning message
 
 ggplot(moo,aes(x=factor(subID),y=percent,color=factor(trialtype),fill=factor(trialtype)))+
@@ -331,6 +361,9 @@ ggplot(moo,aes(x=factor(subID),y=percent,color=factor(trialtype),fill=factor(tri
   theme(legend.position = "bottom")+
   scale_y_continuous(labels = scales::percent,limits=c(0,1),breaks=seq(0,1,.2))
 
+avgAEM <- mean(moo$percent[moo$trialtype==3])
+avgIncorrectAEM <- mean(moo$percent[moo$trialtype==2])
+avgNoAEM <- mean(moo$percent[moo$trialtype==1])
 ```
 
 summary graph: pupil match/mismatch percentage for each subject
@@ -351,9 +384,10 @@ w.no2 <- ddply(w.no,.(subID),summarise,numoftrials=length(unique(TRIAL_INDEX,na.
 
 #create empty dataframe
 subs <- unique(orig.sample5$subID)
-goo <- data.frame(subID=numeric(30),trialtype=numeric(30),percent=numeric(30))
+z <- length(subs)*3
+goo <- data.frame(subID=numeric(z),trialtype=numeric(z),percent=numeric(z))
 goo$subID <- subs
-goo$trialtype <- rep(1:3, each = 10)
+goo$trialtype <- rep(1:3, each = length(subs))
 
 #calculate percent
 #trialtype 1 (match)
@@ -374,9 +408,9 @@ for (j in 1:length(subs)) {
 z <- which(w.mismatch2$subID==subs[j])
 zz <- which(w2$subID==subs[j]) 
 if (length(z)==0) { #if doesn't match
-  goo$percent[j+10] <- NA
+  goo$percent[j+length(subs)] <- NA
 } else {
-  goo$percent[j+10] <- w.mismatch2$numoftrials[z] / w2$numoftrials[zz]
+  goo$percent[j+length(subs)] <- w.mismatch2$numoftrials[z] / w2$numoftrials[zz]
 }
 } 
 
@@ -386,14 +420,14 @@ for (j in 1:length(subs)) {
 z <- which(w.no2$subID==subs[j])
 zz <- which(w2$subID==subs[j]) 
 if (length(z)==0) { #if doesn't match
-  goo$percent[j+20] <- NA
+  goo$percent[j+length(subs)*2] <- NA
 } else {
-  goo$percent[j+20] <- w.no2$numoftrials[z] / w2$numoftrials[zz]
+  goo$percent[j+length(subs)*2] <- w.no2$numoftrials[z] / w2$numoftrials[zz]
 }} 
 
 #plot
-goo$trialtype[1:10] <- 3
-goo$trialtype[20:30] <- 1
+goo$trialtype[1:length(subs)] <- 3
+goo$trialtype[(length(subs)*2+1):(length(subs)*3)] <- 1
 goo[is.na(goo)] <- 0 #replace NA with 0, to get rid of warning message
 
 ggplot(goo,aes(x=factor(subID),y=percent,color=factor(trialtype),fill=factor(trialtype)))+
@@ -416,6 +450,7 @@ Average number of preswitch trials and post switch trials per baby,
 ```{r}
 #number of trials
 coo <- ddply(orig.sample5,.(subID,block,switch),summarise,trials=length(unique(TRIAL_INDEX,na.rm = TRUE)))  
+
 coo2 <- ddply(coo,.(subID,switch),summarise,trialavg=mean(trials,na.rm = TRUE),setrials=sd(trials, na.rm = TRUE)/sqrt(length(trials)))
 
 coo3 <- ddply(coo2,.(switch),summarise,trialavg2=mean(trialavg,na.rm = TRUE),setrials=sd(trialavg, na.rm = TRUE)/sqrt(length(trialavg)))
@@ -468,7 +503,7 @@ ggplot(doo2,aes(x=factor(switch),y=babiesavg,color=factor(switch),fill=factor(sw
 
 ```
 
-average number of trials for 
+% of trials for 
 correct and incorrect AEMs 
 facet_wrap by pre vs post
 ```{r}
@@ -477,25 +512,39 @@ koo <- group_by(orig.sample5, subID, switch, trialtype.aem) %>%
   summarise(
     numoftrials=length(unique(TRIAL_INDEX,na.rm = TRUE))
   )
+
+# total number of trials completed
+numtrials <- group_by(koo, subID) %>%
+  summarise(
+    totaltrials=sum(numoftrials,na.rm = TRUE)
+    )
              
 # only want correct and incorrect AEM
 koo2 <- subset(koo, trialtype.aem < 3)
 
-#preswitch only
-koofinal <- group_by(koo2, switch, trialtype.aem) %>%
+# combine 
+koo3 <- merge(koo2, numtrials)
+
+# calculate %
+koo3$percent <- koo3$numoftrials/koo3$totaltrials
+
+# calculate mean and SD
+koofinal <- group_by(koo3, switch, trialtype.aem) %>%
   summarise(
-    meanTRIALS=mean(numoftrials,na.rm = TRUE),
-    seTRIALS=sd(numoftrials, na.rm = TRUE)/sqrt(length(numoftrials))
+    meanTRIALS=mean(percent,na.rm = TRUE),
+    seTRIALS=sd(percent, na.rm = TRUE)/sqrt(length(percent))
   )
 
+# prepare to plot
 split <- c(`1` = "Preswitch",`2` = "Postswitch")
 limits <- aes(ymax = meanTRIALS + seTRIALS, ymin=meanTRIALS - seTRIALS)
+dodge <- position_dodge(width=0.9)
 
 ggplot(koofinal,aes(x=factor(trialtype.aem),y=meanTRIALS,color=factor(trialtype.aem),fill=factor(trialtype.aem)))+
   geom_bar(stat="identity",position=dodge)+
   theme_bw()+
   theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
-  labs(x = "Trial type", y = "Number of trials")+
+  labs(x = "Trial type", y = "% of experiment")+
   theme(plot.title = element_text(face="bold", size=20, hjust=0))+
   theme(axis.title = element_text(face="bold", size=20))+ 
   theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
@@ -505,9 +554,60 @@ ggplot(koofinal,aes(x=factor(trialtype.aem),y=meanTRIALS,color=factor(trialtype.
   scale_color_manual(values = c("#bebad9", "#fffcb7"))+
   theme(legend.position = "bottom")+
   scale_x_discrete(name="AEM type",breaks=c("1","2"),labels=c("Correct", "Incorrect"))+
-  scale_y_continuous(limits=c(0,5),breaks=seq(0,5,1))+
+  scale_y_continuous(labels=percent,limits=c(0,.1),breaks=seq(0,.1,.02))+
   facet_wrap(~switch,labeller = as_labeller(split))+
   geom_errorbar(limits, width=0.25,color="black")+
+  theme(strip.text = element_text(size=16))
+
+```
+
+% of babies
+correct and incorrect AEMs 
+AEMS trial-by-trial within each block (i.e., Are they learning the correct location during the pre-switch blocks and then updating predictions over the post-switch blocks?)
+facet_wrap by pre vs post
+```{r}
+# number of babies
+koo <- group_by(orig.sample5, NEWTRIALNUM,TRIAL_INDEX, sub.blocks, block, switch, trialtype.aem) %>%
+  summarise(
+    numofbabies=length(unique(subID,na.rm = TRUE))
+  )
+
+# total number of babies
+totalbabies <- group_by(koo, TRIAL_INDEX) %>%
+  summarise(
+    totalbabies=sum(numofbabies,na.rm = TRUE)
+    )
+
+#combine
+koo <- merge(koo, totalbabies)
+
+# percent of babies
+koo$percentbabies <- koo$numofbabies / koo$totalbabies
+
+# only want correct and incorrect AEM
+loofinal <- subset(koo, trialtype.aem < 3)
+
+# prepare to plot
+split <- c(`1` = "Block 1: Preswitch",`2` = "Block 1: Postswitch",`3` = "Block 2: Preswitch",`4` = "Block 2: Postswitch",`5` = "Block 3: Preswitch",`6` = "Block 3: Postswitch")
+
+dodge <- position_dodge(width=0.9)
+
+ggplot(loofinal,aes(x=NEWTRIALNUM,y=percentbabies,color=factor(trialtype.aem),fill=factor(trialtype.aem)))+
+  geom_bar(stat="identity",position=dodge)+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  labs(x = "Trial number", y = "% of babies")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  guides(color=FALSE)+
+  scale_fill_manual(values = c("#bebad9", "#fffcb7"),name="AEM type",breaks=c("1","2"),labels=c("Correct", "Incorrect"))+
+  scale_color_manual(values = c("#bebad9", "#fffcb7"))+
+  theme(legend.position = "bottom")+
+  scale_x_continuous(limits=c(1,9),breaks=seq(1,9,1))+
+  scale_y_continuous(labels=percent,limits=c(0,.6),breaks=seq(0,.6,.1))+
+  facet_wrap(~sub.blocks,labeller = as_labeller(split),ncol = 2)+
   theme(strip.text = element_text(size=16))
 
 ```
@@ -609,7 +709,6 @@ ggplot(efinal,aes(x=timecode,y=looking,color=factor(switch),fill=factor(switch))
 
 main pupil timecourse plot for pre and post
 ```{r}
-
 boo1 <- ddply(orig.sample5,.(subID,switch,TIMECODE),summarise,pupil=mean(PUPIL_CORRECTED,na.rm = TRUE)) #collapse across trials
 boo1 <- subset(boo1, TIMECODE < 4001)
 boo2 <- ddply(boo1,.(switch,TIMECODE),summarise,pupilavg=mean(pupil,na.rm = TRUE),sepupil=sd(pupil, na.rm = TRUE)/sqrt(length(pupil))) #collapse across subs
@@ -709,9 +808,3 @@ ggplot(boo2,aes(x=TIMECODE,y=Xavg,color=factor(switch),fill=factor(switch)))+
   theme(legend.position = "top")+
   theme(plot.title = element_text(hjust = 0.5))
 ```
-
-
-
-
-
-

@@ -19,12 +19,13 @@ library(arm)
 library(wesanderson)
 
 #import pilot data (n=10)
-raw <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheels14_1-10.csv")
+#raw <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheels14_1-10.csv")
+raw2 <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheels14_11-17.csv")
 ```
 
 ```{r}
 #1. Make a copy of original and some class conversions
-poo <- subset(raw, TRIAL_INDEX < 49) #48 trials (3*16)
+poo <- subset(raw2, TRIAL_INDEX < 49) #48 trials (3*16)
 
 poo$RIGHT_PUPIL_SIZE <- as.numeric(as.character(poo$RIGHT_PUPIL_SIZE))
 poo$RIGHT_GAZE_X <- as.numeric(as.character(poo$RIGHT_GAZE_X))
@@ -32,7 +33,7 @@ poo$RIGHT_GAZE_Y <- as.numeric(as.character(poo$RIGHT_GAZE_Y))
 summary(poo)
 
 #the warnings appear bc of converting . to NA, which is correct
-length(which(finalraw$RIGHT_PUPIL_SIZE=="."))
+length(which(raw2$RIGHT_PUPIL_SIZE=="."))
 length(which(is.na(poo$RIGHT_PUPIL_SIZE)))
 
 #2. Assigning each subject a number for subID so it's easier to index 
@@ -40,7 +41,7 @@ poo$subID <- 0
 subs <- unique(poo$RECORDING_SESSION_LABEL)
 
 for (i in 1:length(subs)){
-  poo$subID[poo$RECORDING_SESSION_LABEL == subs[i]] <- i  
+  poo$subID[poo$RECORDING_SESSION_LABEL == subs[i]] <- i+10  
 }
 
 #3. Standardize time 
@@ -90,7 +91,7 @@ yoo <- data.frame(RECORDING_SESSION_LABEL= character(), HTARGET_DISTANCE= numeri
 
 #for each subject, create column called rleLength that counts consecutive filled or NA values (to figure out how long NA values are)
 for (i in 1:length(subs)) { 
-  poo2 <- subset(poo, subID==i)
+  poo2 <- subset(poo, subID==subs[i])
   poo2 <- poo2[, rleLength := {rr <- rle(is.na(poo2$RIGHT_PUPIL_SIZE)); rep(rr$length, rr$length)}]
   #create column rleLength that counts consecutive filled or NA values (figure out how long NA values are)
   yoo <- rbind(yoo,poo2)
@@ -217,7 +218,8 @@ for (j in 1:length(subs)) {
   z <- min(which(poo$subID==subs[j] & poo$TRIAL_INDEX== trials[i])) #when that trial starts
   zz <- max(which(poo$subID==subs[j] & poo$TRIAL_INDEX== trials[i])) #when that trial ends
   poo$trackloss[z:zz] <- trackloss #add info to main DF
-  }}
+  }
+  }
 
 # only keep trials less than 50% trackloss
 poo2 <- subset(poo, trackloss < .50) 
@@ -229,11 +231,7 @@ poo3 <- poo2[-c(a), ]
 # remove gazes that are off the screen (screen dimensions of screen are 1280 x 1024)
 a <- which(poo3$RIGHT_GAZE_X < 0)
 poo3 <- poo3[-c(a), ]
-a <- which(poo3$RIGHT_GAZE_Y < 0)
-poo3 <- poo3[-c(a), ]
 a <- which(poo3$RIGHT_GAZE_X > 1280)
-poo3 <- poo3[-c(a), ]
-a <- which(poo3$RIGHT_GAZE_Y > 1024)
 poo3 <- poo3[-c(a), ]
 
 ## now code for every single sample calculate if they're looking at target
@@ -241,7 +239,7 @@ targetx1 <- 426
 targetx2 <- 854
 
 #0 = distractor, 1 = target, 5 = center, 
-for (i in 204440:length(poo3$RECORDING_SESSION_LABEL)) {
+for (i in 1:length(poo3$RECORDING_SESSION_LABEL)) {
 side <- poo3$leftright[i] #1==left, 2==right
 gaze <- poo3$RIGHT_GAZE_X[i]
 if (side==1) { #if target is on the left side
@@ -281,8 +279,8 @@ ggplot(pupil.sub,aes(x=factor(subID),y=pupilsize,fill=factor(TRIAL_INDEX),color=
   theme(legend.position="none")+
   scale_y_continuous(labels=percent,limits=c(-0.6,1.5),breaks=seq(-0.6,1.5,0.5))
 
-write.csv(poo, "Pinwheel14_Infant_Preprocessed_AllSamples.csv", row.names=TRUE) #save to 
-write.csv(poo3, "Pinwheel14_Infant_Preprocessed_RemovedTrackloss.csv", row.names=TRUE) #save to computer
+write.csv(poo, "Pinwheel14_11-17_Infant_Preprocessed_AllSamples.csv", row.names=TRUE) #save to 
+write.csv(poo3, "Pinwheel14_11-17_Infant_Preprocessed_RemovedTrackloss.csv", row.names=TRUE) #save to computer
 ```
 
 Filtering: following Fawcett (2016)
@@ -314,8 +312,6 @@ for (i in 1:length(trials)) {
 }}
 
 poo4$outlier <- 0
-
-#START HERE
 
 for (j in 1:length(subs)) {
   trials <- unique(poo4$TRIAL_INDEX[poo4$subID==subs[j]])
@@ -355,5 +351,5 @@ ggplot(pupil.sub,aes(x=factor(subID),y=pupilsize,fill=factor(TRIAL_INDEX),color=
   theme(legend.position="none")+
   scale_y_continuous(labels=percent,limits=c(-0.6,1.5),breaks=seq(-0.6,1.5,0.5))
 
-write.csv(poo5, "Pinwheel14_Infant_Preprocessed_RemovedOutliers.csv", row.names=TRUE) #save to
+write.csv(poo5, "Pinwheel14_11-17_Infant_Preprocessed_RemovedOutliers.csv", row.names=TRUE) #save to
 ```

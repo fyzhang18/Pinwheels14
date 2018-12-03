@@ -22,32 +22,29 @@ library(lmerTest)
 library(boot)
 
 # load preprocessed data
-orig.sample.a <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheel14_1-10_Infant_Preprocessed_RemovedOutliers.csv")
-orig.sample.a$X <- NULL
-orig.sample.b <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheel14_11-17_Infant_Preprocessed_RemovedOutliers.csv")
-orig.sample.b$X <- NULL
-
-#combine
-orig.sample <- rbind(orig.sample.a,orig.sample.b)
+orig.sample <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheel14_1-17_Infant_Preprocessed.csv")
+orig.sample$X <- NULL
 
 # excluded trial 1 of each preswitch sub-block
 orig.sample2 <- subset(orig.sample, !(switch==1 & trialnum==1))
+orig.sample3 <- subset(orig.sample2, trackloss < 0.5)
 
 # orig.sample = trials with more than 50% looking
 # orig.sample2 = excluded trial 1 of each preswitch sub-block
+# orig.sample3 = keep good trials (less than 50% trackloss)
 ```
 
 Percentage of experiment completed per subject
 ```{r}
-v1 <- ddply(orig.sample2,.(subID),summarise,totaltrials=length(unique(TRIAL_INDEX,na.rm = TRUE)))  
-v1$percent <- v1$totaltrials/51 #have to divide by 51, becaue original study is 48 trials, but then we split postswitch trial 1  into 2 so it's 48+3
+v1 <- ddply(orig.sample3,.(subID),summarise,totaltrials=length(unique(TRIAL_INDEX,na.rm = TRUE)))  
+v1$percent <- v1$totaltrials/45 #45 because we removed 3 trials (first trial of each preswitch) 
 z <- mean(v1$percent)
 
 ggplot(v1,aes(x=factor(subID),y=percent))+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
   geom_bar(stat="identity")+
   ggtitle("Percent of experiment completed after exclusion criteria")+
-  labs(x = "Subject ID", y = "% of experiment completed (# of trials/51)")+
+  labs(x = "Subject ID", y = "Data collected")+
   theme(plot.title = element_text(face="bold", size=20, hjust=0))+
   theme(axis.title = element_text(face="bold", size=20))+ 
   theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
@@ -59,104 +56,124 @@ ggplot(v1,aes(x=factor(subID),y=percent))+
 
 ```
 
-REMOVE BAD SUBJECTS
+REMOVE BAD SUBJECTS (less than 50%)
 ```{r}
-orig.sample2 <- subset(orig.sample2, subID != 1)
-orig.sample2 <- subset(orig.sample2, subID != 2)
-orig.sample2 <- subset(orig.sample2, subID != 4)
-orig.sample2 <- subset(orig.sample2, subID != 6)
-orig.sample2 <- subset(orig.sample2, subID != 8)
-orig.sample2 <- subset(orig.sample2, subID != 11)
-orig.sample2 <- subset(orig.sample2, subID != 15)
-orig.sample2 <- subset(orig.sample2, subID != 17)
+orig.sample3 <- subset(orig.sample3, subID != 1)
+orig.sample3 <- subset(orig.sample3, subID != 2)
+orig.sample3 <- subset(orig.sample3, subID != 4)
+orig.sample3 <- subset(orig.sample3, subID != 6)
+orig.sample3 <- subset(orig.sample3, subID != 8)
+orig.sample3 <- subset(orig.sample3, subID != 11)
+orig.sample3 <- subset(orig.sample3, subID != 15)
+orig.sample3 <- subset(orig.sample3, subID != 17)
+```
+
+#did not remove trials where it's > 2.5 SD from mean
+
+scatterplot of pupil size per subject after removing bad trials and subjects
+```{r}
+foo <- ddply(orig.sample3,.(subID,TRIAL_INDEX),summarise,pupilsize=mean(PUPIL_CORRECTED,na.rm = TRUE))
+
+foo2 <- na.omit(foo)
+
+ggplot(foo2,aes(x=factor(subID),y=pupilsize,fill=factor(TRIAL_INDEX),color=factor(TRIAL_INDEX)))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_point()+ggtitle("Pupil change per subject")+
+  labs(x = "Subject", y = "Pupil change (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="none")+
+  scale_y_continuous(labels=percent,limits=c(-0.3,1),breaks=seq(-0.3,1,0.2))
 ```
 
 AEM coding
 ```{r}
-poo <- orig.sample2
+# AEM CRITERIA: must look to center first, must make eye movement in 700-2700ms
 
-#1. Binning every 100ms, to make sure that it's actually a fixation for lookstotarget
-moo <- data.frame(subID=numeric(),trialnum=numeric(),timecode=numeric(),block=numeric(),switch=numeric(),lookingattarget=numeric())
+# make a copy
+poo <- orig.sample3
+
+# first, figure out which trials looked to center first during 0-700ms
+poo$keep[poo$lookattarget==5 & poo$TIMECODE < 700] <- 1
+
 subs <- unique(poo$subID)
-time <- seq(100,4000, by=100) #the time bins we are trying to create (0-4000ms) doing 4000ms 
-
 for (j in 1:length(subs)) {
-  #gets every trial for 1 subject
   trials <- unique(poo$TRIAL_INDEX[poo$subID==subs[j]])
-  print(j)
+  print(subs[j])
   for (i in 1:length(trials)) {
-    #gets all sample for 1 trial  
-    woo <- subset(poo, subID==subs[j] & TRIAL_INDEX == trials[i])
-    c <- woo$block[1]
-    cc <- woo$switch[1]
-    ccc <- woo$trialnum[1]
-    for (k in 1:length(time)){
-      #for every 25 sample/100 ms, get lookattarget column
-      if (k==1) {
-        target <- woo$lookattarget[woo$TIMECODE < time[k]+1] #gets 0-100ms
-        d <- unique(target)
-        dd <- which(d==1)
-      } else {
-        target <- woo$lookattarget[woo$TIMECODE < time[k]+1 & woo$TIMECODE > time[k-1]-1]
-        d <- unique(target)
-        dd <- which(d==1)
-      }
-      #see if entire chunk is looking at target
-      if (length(target)==0) { #no samples collected during this time
-        aa <- c(subs[j],trials[i],ccc,c,cc,time[k],99)   
-        moo <- rbind(moo,aa)
-        warnings()
-      } else if (length(d)==1 & d==1) { #looking at target entire time
-        aa <- c(subs[j],trials[i],ccc,c,cc,time[k],d)   
-        moo <- rbind(moo,aa)
-        warnings()
-      } else if (length(d)==1 & d==0) { #looking at distractor entire time
-        aa <- c(subs[j],trials[i],ccc,c,cc,time[k],d)   
-        moo <- rbind(moo,aa)
-        warnings()
-      } else if (length(d)==1 & d==5) { #looking at center entire time
-        aa <- c(subs[j],trials[i],ccc,c,cc,time[k],d)   
-        moo <- rbind(moo,aa)
-        warnings()
-      } else if (length(d) > 1 & length(dd) < 1) { #not looking at same location and not looking at target (looking at distractor and center)
-        aa <- c(subs[j],trials[i],ccc,c,cc,time[k],9)   
-        moo <- rbind(moo,aa) 
-        warnings()
-      } else { #not looking at same location and but looking at target sometimes
-        #calculate proportion looking  
-        b <- length(which(target==1)) #samples where subs are looking at target
-        bb <- length(which(target==1))/length(target) #looking at target/25
-        aa <- c(subs[j],trials[i],ccc,c,cc,time[k],bb) 
-        moo <- rbind(moo,aa)
-        warnings()
-      }}}}
-
-names(moo)[1] <- "subID"
-names(moo)[2] <- "trialnum"
-names(moo)[3] <- "trialnum2"
-names(moo)[4] <- "block"
-names(moo)[5] <- "switch"
-names(moo)[6] <- "timecode"
-names(moo)[7] <- "lookattarget"
-
-#0 = distractor, 1 = target, 5 = center, 9 = looking at distractor and center, 99 = no data collected
-x1 <- subset(moo, lookattarget < 99) #remove no data collected
-x1$looktocenter <- 0
-
-#coding which trials looked to center before making AEM
-subs <- unique(x1$subID)
-for (j in 1:length(subs)) {
-  #gets every trial for 1 subject
-  trials <- unique(x1$trialnum[x1$subID==subs[j]])
-  print(j)
-  for (i in 1:length(trials)) {
-    foo <- subset(x1, subID==subs[j] & trialnum==trials[i] & timecode < 701)  
-    if (any(foo$lookattarget==5)) {
-      x1$looktocenter[x1$subID==subs[j] & x1$trialnum==trials[i]] <- 1
+    z <- which(poo$keep==1 & poo$subID==subs[j] & poo$TRIAL_INDEX==trials[i]) 
+    if (length(z) > 25) { #if they looked at center for over 100ms
+      poo$keep[poo$subID==subs[j] & poo$TRIAL_INDEX==trials[i]] <- 1 #keep entire trial
+    } else {
+      poo$keep[poo$subID==subs[j] & poo$TRIAL_INDEX==trials[i]] <- 0 #remove entire trial
     }
-  }}
+  }
+}
 
+# keep only those trials then look at AEMS
+aemwindow <- subset(poo, keep == 1)
+
+## AEM
+
+# count number of consecutive looks
+aemwindow$targetcount <- sequence(rle(aemwindow$lookattarget)$lengths)
+
+# calculate diff column so we know when a look starts and stops
+aemwindow$diff <- c(diff(aemwindow$targetcount),-aemwindow$targetcount[length(aemwindow$RECORDING_SESSION_LABEL)])
+
+# only care about eye movements initiated between 700-2700ms bc of AEM
+aemwindow$keep <- 1
+rownum_lookstart <- which(aemwindow$targetcount==1) #where each look starts
+
+for (i in 1:length(rownum_lookstart)){
+  time <- aemwindow$TIMECODE[rownum_lookstart[i]]  #time look starts
+  if (time < 700 | time > 2700) { #remove it
+    if (i == length(rownum_lookstart)) { 
+      aemwindow$keep[(rownum_lookstart[i]):length(aemwindow$keep)] <- 0
+    } else {
+      aemwindow$keep[(rownum_lookstart[i]):(rownum_lookstart[i+1] - 1)] <- 0
+    }
+  }
+}
+
+# make sure look is longer than 100ms
+rownum_lookstart <- which(aemwindow$targetcount==1) #where each look starts
+
+for (i in 1:length(rownum_lookstart)){
+  if (i==length(rownum_lookstart)) { #it's the last look
+    lengthoflook <- aemwindow$diff[length(aemwindow$subID)] #the last row of the DF
+    if (lengthoflook > -25) { #shorter than 100ms, remove it
+      aemwindow$keep[(rownum_lookstart[i]):(rownum_lookstart[i+1] - 1)] <- 0
+    }
+  } else {
+    rownum_end <- rownum_lookstart[i+1] - 1 #row num when look ends
+    lengthoflook <- aemwindow$diff[rownum_end] #length of look
+    if (lengthoflook > -25) { #shorter than 100ms, remove it
+      aemwindow$keep[(rownum_lookstart[i]):(rownum_lookstart[i+1] - 1)] <- 0
+    }
+  }
+}
+
+
+
+# remove bad looks (no AEM and not long enough)
+aemwindow2 <- subset(aemwindow, keep == 1)
+
+# remove bad eye gazes
+aemcodingall <- subset(aemwindow2, lookattarget !=9)
+
+# groups last sample of every fixation
+aemcodingunique <- subset(aemcodingall, diff !=1)
+
+# only keep looks that are longer than 100ms
+aemcodingunique <- subset(aemcodingunique, diff < -25)
+```
+
+# SKIPPED #
 #code trial type: pupil match, pupil mismatch, or no AEM 
+```{r}
 #must look to center first, must make eye movement in 700-2700ms
 #type 1 = pupil match, 2 = pupil mismatch, 3 = no AEM
 
@@ -182,6 +199,7 @@ for (j in 1:length(subs)) {
 pupilbreakdown <- x1
 ```
 
+# SKIPPED #
 add in trialtype info into main DF
 Recode every trial two times
 -correct vs incorrect for AEM
@@ -191,44 +209,44 @@ Recode every trial two times
 z1 <- ddply(pupilbreakdown,.(subID,trialnum,trialnum2),summarise,trialtype=(unique(type,na.rm = TRUE)))  
 z1 <- subset(z1, trialtype < 3)
 
-orig.sample2$trialtype.pupil <- 3
+orig.sample3$trialtype.pupil <- 3
 
 for (j in 1:length(z1$subID)) {
   x <- z1$subID[j]
   y <- z1$trialnum[j]
   y2 <- z1$trialnum2[j]
   z <- z1$trialtype[j]
-  orig.sample2$trialtype.pupil[orig.sample2$subID==x & orig.sample2$TRIAL_INDEX==y & orig.sample2$trialnum==y2] <- z
+  orig.sample3$trialtype.pupil[orig.sample3$subID==x & orig.sample3$TRIAL_INDEX==y & orig.sample3$trialnum==y2] <- z
 }
 # type 1 = pupil match, 2 = pupil mismatch, 3 = no AEM
 
 # correct vs incorrect for AEM
-orig.sample2$trialtype.aem <- orig.sample2$trialtype.pupil
+orig.sample3$trialtype.aem <- orig.sample3$trialtype.pupil
 #only trial 1 of post-switch switches labelling, unless it's 3
-orig.sample2$trialtype.aem[orig.sample2$trialtype.pupil==1 & orig.sample2$trialnum==1 & orig.sample2$switch==2] <- 2
-orig.sample2$trialtype.aem[orig.sample2$trialtype.pupil==2 & orig.sample2$trialnum==1 & orig.sample2$switch==2] <- 1
+orig.sample3$trialtype.aem[orig.sample3$trialtype.pupil==1 & orig.sample3$trialnum==1 & orig.sample3$switch==2] <- 2
+orig.sample3$trialtype.aem[orig.sample3$trialtype.pupil==2 & orig.sample3$trialnum==1 & orig.sample3$switch==2] <- 1
 #type 1 = correct aem, 2 = incorrect aem, 3 = no AEM
 
 #checking to make sure the correct trials were recoded
-foo <- ddply(orig.sample2,.(subID,TRIAL_INDEX,trialtype.aem),summarise,trialtype.pupil=unique(trialtype.pupil,na.rm = TRUE))
+foo <- ddply(orig.sample3,.(subID,TRIAL_INDEX,trialtype.aem),summarise,trialtype.pupil=unique(trialtype.pupil,na.rm = TRUE))
 foo$diff <- foo$trialtype.aem - foo$trialtype.pupil 
 ```
 
 Recode post-switch trial 1
 ```{r}
-orig.sample2a <- subset(orig.sample2, switch==1)
-orig.sample2a <- subset(orig.sample2a, trialnum > 1)
-orig.sample2a$NEWTRIALNUM <- orig.sample2a$trialnum
+orig.sample3a <- subset(orig.sample3, switch==1)
+orig.sample3a <- subset(orig.sample3a, trialnum > 1)
+orig.sample3a$NEWTRIALNUM <- orig.sample3a$trialnum
 #2-9 for pre, 1-8 for post
 
-orig.sample2b <- subset(orig.sample2, switch==2)
-orig.sample2b$NEWTRIALNUM <- orig.sample2b$trialnum 
+orig.sample3b <- subset(orig.sample3, switch==2)
+orig.sample3b$NEWTRIALNUM <- orig.sample3b$trialnum 
 
 #relabel center and aem time period as preswitch trial 9
-orig.sample2b$switch[orig.sample2b$TIMECODE < 2701 & orig.sample2b$trialnum==1] <- 1
-orig.sample2b$NEWTRIALNUM[orig.sample2b$TIMECODE < 2701 & orig.sample2b$trialnum==1] <- 9
+orig.sample3b$switch[orig.sample3b$TIMECODE < 2701 & orig.sample3b$trialnum==1] <- 1
+orig.sample3b$NEWTRIALNUM[orig.sample3b$TIMECODE < 2701 & orig.sample3b$trialnum==1] <- 9
 
-orig.sample5 <- rbind(orig.sample2a,orig.sample2b)
+orig.sample5 <- rbind(orig.sample3a,orig.sample3b)
 
 orig.sample5$TRIAL_INDEX[orig.sample5$switch==1 & orig.sample5$NEWTRIALNUM==9 & orig.sample5$block==1] <- 101
 orig.sample5$TRIAL_INDEX[orig.sample5$switch==1 & orig.sample5$NEWTRIALNUM==9 & orig.sample5$block==2] <- 201
@@ -279,75 +297,44 @@ ggplot(hoo2,aes(x=factor(subID),y=looking))+
   theme(legend.position="none")+
   theme(plot.title = element_text(hjust = 0.5))+
   scale_y_continuous(labels = scales::percent,limits=c(0,1),breaks=seq(0,1,.1))+
-  geom_hline(yintercept = z, color="coral",size=1.5)+
-  geom_errorbar(limits, width=0.25,color="black")
+  geom_hline(yintercept = z, color="coral",size=1.5)
 ```
 
 summary graph: aem correct/incorrect percentage for each subject
 ```{r}
+# number of aem type for each subject
+foo <- group_by(aemcodingunique, subID, lookattarget) %>%
+  summarise(
+    numoftrials =length(unique(TRIAL_INDEX,na.rm = TRUE))
+  )
+
 #total number of trials completed by subject
-v1 <- ddply(orig.sample5,.(subID,TRIAL_INDEX),summarise,aemtrialtype=unique(trialtype.aem,na.rm = TRUE))
-v2 <- ddply(v1,.(subID),summarise,numoftrials=length(unique(TRIAL_INDEX,na.rm = TRUE)))
+total <- group_by(orig.sample5, subID) %>%
+  summarise(
+    totaltrials =length(unique(TRIAL_INDEX,na.rm = TRUE))
+  )
 
-#grouping trials into trialtypes
-v.cor <- subset(v1, aemtrialtype==1)
-v.incor <- subset(v1, aemtrialtype==2)
-v.no <- subset(v1, aemtrialtype==3)
-
-#total number of trials for each trial type  
-v.cor2 <- ddply(v.cor,.(subID),summarise,numoftrials=length(unique(TRIAL_INDEX,na.rm = TRUE)))
-v.incor2 <- ddply(v.incor,.(subID),summarise,numoftrials=length(unique(TRIAL_INDEX,na.rm = TRUE)))
-v.no2 <- ddply(v.no,.(subID),summarise,numoftrials=length(unique(TRIAL_INDEX,na.rm = TRUE)))
-
-#create empty dataframe
-subs <- unique(orig.sample5$subID)
-z <- length(subs)*3
-moo <- data.frame(subID=numeric(z),trialtype=numeric(z),percent=numeric(z))
-moo$subID <- subs
-moo$trialtype <- rep(1:3, each = length(subs))
-
-#calculate percent
-#trialtype 1 (correct)
-subs <- unique(moo$subID)
-for (j in 1:length(subs)) { 
-z <- which(v.cor2$subID==subs[j])
-zz <- which(v2$subID==subs[j]) 
-if (length(z)==0) { #if doesn't match
-  moo$percent[j] <- NA
-} else {
-  moo$percent[j] <- v.cor2$numoftrials[z] / v2$numoftrials[zz]
+# combine
+foo2 <- merge(foo,total)
+  
+# update number for no AEM 
+subs <- unique(foo2$subID)
+for (i in 1:length(subs)) { 
+  a <- foo2$numoftrials[foo2$lookattarget!=5 & foo2$subID==subs[i]]
+  a <- sum(a)
+  foo2$numoftrials[foo2$lookattarget==5 & foo2$subID==subs[i]] <- unique(foo2$totaltrials[foo2$subID==subs[i]]) - a 
 }
-} 
 
-#trialtype 2 (incorrect)
-subs <- unique(moo$subID)
-for (j in 1:length(subs)) { 
-z <- which(v.incor2$subID==subs[j])
-zz <- which(v2$subID==subs[j]) 
-if (length(z)==0) { #if doesn't match
-  moo$percent[j+length(subs)] <- NA
-} else {
-  moo$percent[j+length(subs)] <- v.incor2$numoftrials[z] / v2$numoftrials[zz]
-}
-} 
+# calculate percent
+foo2$percent <- foo2$numoftrials / foo2$totaltrials
 
-#trialtype 3 (no AEM)
-subs <- unique(moo$subID)
-for (j in 1:length(subs)) { 
-z <- which(v.no2$subID==subs[j])
-zz <- which(v2$subID==subs[j]) 
-if (length(z)==0) { #if doesn't match
-  moo$percent[j+length(subs)*2] <- NA
-} else {
-  moo$percent[j+length(subs)*2] <- v.no2$numoftrials[z] / v2$numoftrials[zz]
-}} 
+# relabel
+foo2$trialtype <- 1
+foo2$trialtype[foo2$lookattarget==0] <- 2
+foo2$trialtype[foo2$lookattarget==1] <- 3
 
-#plot
-moo$trialtype[1:length(subs)] <- 3
-moo$trialtype[(length(subs)*2+1):(length(subs)*3)] <- 1
-moo[is.na(moo)] <- 0 #replace NA with 0, to get rid of warning message
-
-ggplot(moo,aes(x=factor(subID),y=percent,color=factor(trialtype),fill=factor(trialtype)))+
+# plot
+ggplot(foo2,aes(x=factor(subID),y=percent,color=factor(trialtype),fill=factor(trialtype)))+
   geom_bar(stat="identity")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
   labs(x = "Subject", y = "% of trials")+
@@ -365,6 +352,8 @@ avgAEM <- mean(moo$percent[moo$trialtype==3])
 avgIncorrectAEM <- mean(moo$percent[moo$trialtype==2])
 avgNoAEM <- mean(moo$percent[moo$trialtype==1])
 ```
+
+# SKIPPED everything below this point #
 
 summary graph: pupil match/mismatch percentage for each subject
 ```{r}

@@ -19,13 +19,15 @@ library(arm)
 library(wesanderson)
 
 #import pilot data (n=10)
-#raw <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheels14_1-10.csv")
+raw <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheels14_1-10.csv")
 raw2 <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Pinwheels14/Pinwheels14_11-17.csv")
+
+foo <- rbind(raw,raw2)
 ```
 
 ```{r}
 #1. Make a copy of original and some class conversions
-poo <- subset(raw2, TRIAL_INDEX < 49) #48 trials (3*16)
+poo <- subset(foo, TRIAL_INDEX < 49) #48 trials (3*16)
 
 poo$RIGHT_PUPIL_SIZE <- as.numeric(as.character(poo$RIGHT_PUPIL_SIZE))
 poo$RIGHT_GAZE_X <- as.numeric(as.character(poo$RIGHT_GAZE_X))
@@ -33,7 +35,7 @@ poo$RIGHT_GAZE_Y <- as.numeric(as.character(poo$RIGHT_GAZE_Y))
 summary(poo)
 
 #the warnings appear bc of converting . to NA, which is correct
-length(which(raw2$RIGHT_PUPIL_SIZE=="."))
+length(which(foo$RIGHT_PUPIL_SIZE=="."))
 length(which(is.na(poo$RIGHT_PUPIL_SIZE)))
 
 #2. Assigning each subject a number for subID so it's easier to index 
@@ -41,21 +43,19 @@ poo$subID <- 0
 subs <- unique(poo$RECORDING_SESSION_LABEL)
 
 for (i in 1:length(subs)){
-  poo$subID[poo$RECORDING_SESSION_LABEL == subs[i]] <- i+10  
+  poo$subID[poo$RECORDING_SESSION_LABEL == subs[i]] <- i 
 }
 
-#3. Standardize time 
-subs <- unique(poo$subID)
+unique(poo$subID)
 
-for (j in 1:length(subs)) {
-  trials <- unique(poo$TRIAL_INDEX[poo$subID == subs[j]])
-  print(subs[j])
-  for (i in 1:length(trials)) {
-    #gets the timestamp for a trial for a subject
-    times = poo$TIMESTAMP[poo$subID == subs[j] & poo$TRIAL_INDEX == trials[i]] 
-    start = min(times) #finds the smallest timestamp
-    poo$TIMECODE[poo$subID == subs[j] & poo$TRIAL_INDEX == trials[i]] = poo$TIMESTAMP[poo$subID == subs[j] & poo$TRIAL_INDEX == trials[i]] - start
-  }}
+#3. Standardize time 
+baseline <- poo %>%
+  group_by(subID, TRIAL_INDEX) %>%
+  summarise(starttime = min(TIMESTAMP))
+# combine to data base (this step takes long bc there are lots of rows of data)  
+poo <- merge(poo, baseline)  
+# calculate pupil change from baseline
+poo <- mutate(poo, TIMECODE = TIMESTAMP - starttime)
 
 #4. Check hertz recorded at 
 for (i in 1:length(unique(poo$subID))) {
@@ -87,7 +87,8 @@ poo <- data.table(poo)
 poo <- poo[, orig := .I] 
 
 #create empty DF
-yoo <- data.frame(RECORDING_SESSION_LABEL= character(), HTARGET_DISTANCE= numeric(),HTARGET_X= numeric(),HTARGET_Y= numeric(),LEFT_GAZE_X= numeric(),LEFT_GAZE_Y= numeric(),LEFT_IN_BLINK= numeric(),LEFT_PUPIL_SIZE= numeric(),RIGHT_GAZE_X= numeric(),RIGHT_GAZE_Y= numeric(),RIGHT_IN_BLINK= numeric(),RIGHT_PUPIL_SIZE= numeric(),SAMPLE_INDEX= numeric(),SAMPLE_MESSAGE= character(),TARGET_X= numeric(),TARGET_Y= numeric(),TIMESTAMP= numeric(),TRIAL_INDEX= numeric(),targetside= numeric(),subID= numeric(),TIMECODE= numeric(),orig= numeric(),rleLength= numeric())
+yoo <- poo[FALSE,]
+yoo$rleLength <- NA
 
 #for each subject, create column called rleLength that counts consecutive filled or NA values (to figure out how long NA values are)
 for (i in 1:length(subs)) { 
@@ -101,9 +102,20 @@ for (i in 1:length(subs)) {
 poo <- yoo
 
 #Only fill in NA gaps with length < 100 (100 samples = 400ms) going liberal, using linear interpolation na.approx. If you want cubic spline interpolation, use na.spline
-poo$RIGHT_PUPIL_SIZE <- with(poo, ifelse(rleLength < 100, na.approx(RIGHT_PUPIL_SIZE), RIGHT_PUPIL_SIZE))
+poo$RIGHT_PUPIL_SIZE <- with(poo, ifelse(rleLength < 101, na.approx(RIGHT_PUPIL_SIZE), RIGHT_PUPIL_SIZE))
 summary(poo$RIGHT_PUPIL_SIZE) 
 #RESULT = 30.3% blank
+
+# Relabel x gazes that are off the screen as NA (screen dimensions of screen are 1280 x 1024)
+poo[, 11][poo[, 11] < 0] <- NA
+poo[, 11][poo[, 11] > 1280] <- NA
+# Relabel y gazes that are off the screen as NA (screen dimensions of screen are 1280 x 1024)
+poo[, 12][poo[, 12] < 0] <- NA
+poo[, 12][poo[, 12] > 1024] <- NA
+
+# Relabel raw pupil size as NA if the gaze coordinates are NA and it's not a blink. We interpolated some missing RIGHT_PUPIL_SIZE data because it was a blink. So don't want to replace those values with NA.
+a <- which(is.na(poo$RIGHT_GAZE_X & poo$rleLength > 100))
+poo$RIGHT_PUPIL_SIZE[a] <- NA
 
 #7. Convert pupil area to diameter for certain participants 
 # diameter = 256 * sqrt(area / Pi)
@@ -121,29 +133,23 @@ for (i in 1:length(subs)){
   }}
 
 #8. Standardize pupil size (percentage change from baseline)
-poo$SAMPLE_MESSAGE <- as.character(poo$SAMPLE_MESSAGE)
-
 #Task:
 #250ms blank
 #1500ms circle
 #800ms blank
 #1000ms target
 
-#baseline = 1750ms of a trial or 437 samples (USE THIS)
-pooA <- poo
+#baseline = 1750ms of a trial or 437 samples 
+# calculate baseline for every trial
+baseline <- poo %>%
+  group_by(subID, TRIAL_INDEX) %>%
+  summarise(baseline = mean(RIGHT_PUPIL_SIZE[1:436],na.rm = TRUE))
 
-subs <- unique(pooA$subID)
-for (j in 1:length(subs)) {
-  trials <- unique(pooA$TRIAL_INDEX[pooA$subID==subs[j]])
-  print(subs[j])
-  for (i in 1:length(trials)) {
-    bluecircle <- min(which(pooA$subID==subs[j] & pooA$TRIAL_INDEX == trials[i]))
-    baselineall <- pooA$RIGHT_PUPIL_SIZE[bluecircle:(bluecircle+436)] 
-    baseline <- mean(baselineall,na.rm = TRUE) #baseline avg
-    pooA$PUPIL_CORRECTED[pooA$subID==subs[j] & pooA$TRIAL_INDEX == trials[i]] <- (pooA$RIGHT_PUPIL_SIZE[pooA$subID==subs[j] & pooA$TRIAL_INDEX == trials[i]] - baseline) / baseline
-  }}
+# combine to data base  
+poo <- merge(poo, baseline)  
 
-poo <- pooA
+# calculate pupil change from baseline
+poo <- mutate(poo, PUPIL_CORRECTED = (RIGHT_PUPIL_SIZE - baseline)/baseline)
 
 #10. Add in additional information related to experiment
 #add which side of screen they're looking at 
@@ -187,86 +193,68 @@ poo$trialnum[poo$TRIAL_INDEX == 5 | poo$TRIAL_INDEX == 13 | poo$TRIAL_INDEX == 2
 poo$trialnum[poo$TRIAL_INDEX == 6 | poo$TRIAL_INDEX == 14 | poo$TRIAL_INDEX == 22 | poo$TRIAL_INDEX == 30 | poo$TRIAL_INDEX == 38 | poo$TRIAL_INDEX == 46] <- 6
 poo$trialnum[poo$TRIAL_INDEX == 7 | poo$TRIAL_INDEX == 15 | poo$TRIAL_INDEX == 23 | poo$TRIAL_INDEX == 31 | poo$TRIAL_INDEX == 39 | poo$TRIAL_INDEX == 47] <- 7
 poo$trialnum[poo$TRIAL_INDEX == 8 | poo$TRIAL_INDEX == 16 | poo$TRIAL_INDEX == 24 | poo$TRIAL_INDEX == 32 | poo$TRIAL_INDEX == 40 | poo$TRIAL_INDEX == 48] <- 8
+
 ```
 
+For each subject, each trial, calculate percent trackloss (include NA and gazes that are off screen)
 ```{r}
-#for each subject, each trial, calculate percent trackloss (include NA and gazes that are off screen)
-#1 = looking at target
-#0 = not looking at target
-#9 = invalid looking (i.e. not even on the )
-
 #width is 1280
-targetx1 <- 426
-targetx2 <- 854
-poo$trackloss <- 99
-poo$lookattarget <- 9
+trackloss <- group_by(poo, subID, TRIAL_INDEX) %>%
+  summarise(
+    missingdata = length(which(is.na(RIGHT_PUPIL_SIZE))),
+    totaldata = n()
+  )
 
-subs <- unique(poo$subID)
-for (j in 1:length(subs)) {
-  trials <- unique(poo$TRIAL_INDEX[poo$subID==subs[j]])
-  print(subs[j])
-  for (i in 1:length(trials)) {
-  #gets all sample for 1 trial  
-  woo <- subset(poo, subID==subs[j] & TRIAL_INDEX == trials[i])
-  a1 <- which(is.na(woo$RIGHT_GAZE_X)) #NA values
-  a2 <- which(woo$RIGHT_GAZE_X < 0) #looking off screen
-  a3 <- which(woo$RIGHT_GAZE_Y < 0) #looking off screen
-  a4 <- which(woo$RIGHT_GAZE_X > 1280) #looking off screen
-  a5 <- which(woo$RIGHT_GAZE_Y > 1024) #looking off screen
-  a <- length(a1)+length(a2)+length(a3)+length(a4)+length(a5) #num of samples that are bad
-  trackloss <- a/length(woo$RECORDING_SESSION_LABEL)
-  z <- min(which(poo$subID==subs[j] & poo$TRIAL_INDEX== trials[i])) #when that trial starts
-  zz <- max(which(poo$subID==subs[j] & poo$TRIAL_INDEX== trials[i])) #when that trial ends
-  poo$trackloss[z:zz] <- trackloss #add info to main DF
-  }
-  }
+trackloss$percentmissing <- trackloss$missingdata / trackloss$totaldata
 
-# only keep trials less than 50% trackloss
-poo2 <- subset(poo, trackloss < .50) 
+trackloss$missingdata <- NULL
+trackloss$totaldata <- NULL
 
-# for the remaining trials remove trackloss
-a <- which(is.na(poo2$RIGHT_GAZE_X)) #X and Y are the same
-poo3 <- poo2[-c(a), ]
+poo <- merge(poo, trackloss)
 
-# remove gazes that are off the screen (screen dimensions of screen are 1280 x 1024)
-a <- which(poo3$RIGHT_GAZE_X < 0)
-poo3 <- poo3[-c(a), ]
-a <- which(poo3$RIGHT_GAZE_X > 1280)
-poo3 <- poo3[-c(a), ]
+unique(poo$trackloss)
+```
 
+Code every sample if they're looking at target 
+```{r}
 ## now code for every single sample calculate if they're looking at target
-targetx1 <- 426
-targetx2 <- 854
+poo$lookattarget <- 9
+leftx2 <- 426
+rightx1 <- 854
 
-#0 = distractor, 1 = target, 5 = center, 
-for (i in 1:length(poo3$RECORDING_SESSION_LABEL)) {
-side <- poo3$leftright[i] #1==left, 2==right
-gaze <- poo3$RIGHT_GAZE_X[i]
-if (side==1) { #if target is on the left side
-  if (poo3$RIGHT_GAZE_X[i] < targetx1) { #if gaze is on the left side
-    poo3$lookattarget[i] <- 1 #1 = looking at target location
-  } else if (poo3$RIGHT_GAZE_X[i] > targetx2) {
-    poo3$lookattarget[i] <- 0 #0 = looking at distractor
-  } else {
-    poo3$lookattarget[i] <- 5 #5 = must be looking at center
-  }
-} 
-if (side==2) { #if target is on the right side
-  if (poo3$RIGHT_GAZE_X[i] > targetx2) { #if gaze is on the right side
-    poo3$lookattarget[i] <- 1 #1 = looking at target location
-  } else if (poo3$RIGHT_GAZE_X[i] < targetx1 ) { 
-    poo3$lookattarget[i] <- 0 #0 = looking at distractor
-  } else {
-    poo3$lookattarget[i] <- 5 #5 = must be looking at center
-  }
-}
-}
+# 1 = target, 2 = distractor, 5 = center, 9 = missing
+poo2 <- poo %>%
+mutate(lookattarget = ifelse(leftright ==1 & RIGHT_GAZE_X < leftx2, 1,
+ifelse(leftright ==1 & RIGHT_GAZE_X > rightx1, 0, 
+ifelse(leftright ==2 & RIGHT_GAZE_X > rightx1, 1, 
+ifelse(leftright ==2 & RIGHT_GAZE_X < leftx2, 0,
+ifelse(is.na(RIGHT_GAZE_X), 9, 5 ))))))
+
+poo2$lookattarget[is.na(poo2$lookattarget)] <- 9
+
+#double check it worked
+blah <- subset(poo2, lookattarget==1 & leftright ==1)
+ggplot(blah,aes(x=RIGHT_GAZE_X,y=RIGHT_GAZE_Y,color=factor(subID),fill=factor(subID)))+
+  geom_point()+
+  ggtitle("Left")+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,200))+
+  scale_y_continuous(limits=c(0,1025),breaks=seq(0,1025,100))
+
+#center
+blah <- subset(poo2, lookattarget==5)
+ggplot(blah,aes(x=RIGHT_GAZE_X,y=RIGHT_GAZE_Y,color=factor(subID),fill=factor(subID)))+
+  geom_point()+
+  ggtitle("center")+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,200))+
+  scale_y_continuous(limits=c(0,1025),breaks=seq(0,1025,100))
 
 #replace infinite with NA
-is.na(poo3$PUPIL_CORRECTED) <- sapply(poo3$PUPIL_CORRECTED, is.infinite)
+is.na(poo2$PUPIL_CORRECTED) <- sapply(poo2$PUPIL_CORRECTED, is.infinite)
+```
 
-#scatterplot of pupil size per subject
-pupil.sub <- ddply(poo3,.(subID,TRIAL_INDEX),summarise,pupilsize=mean(PUPIL_CORRECTED,na.rm = TRUE))
+scatterplot of pupil size per subject
+```{r}
+pupil.sub <- ddply(poo2,.(subID,TRIAL_INDEX),summarise,pupilsize=mean(PUPIL_CORRECTED,na.rm = TRUE))
 
 ggplot(pupil.sub,aes(x=factor(subID),y=pupilsize,fill=factor(TRIAL_INDEX),color=factor(TRIAL_INDEX)))+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
@@ -279,8 +267,7 @@ ggplot(pupil.sub,aes(x=factor(subID),y=pupilsize,fill=factor(TRIAL_INDEX),color=
   theme(legend.position="none")+
   scale_y_continuous(labels=percent,limits=c(-0.6,1.5),breaks=seq(-0.6,1.5,0.5))
 
-write.csv(poo, "Pinwheel14_11-17_Infant_Preprocessed_AllSamples.csv", row.names=TRUE) #save to 
-write.csv(poo3, "Pinwheel14_11-17_Infant_Preprocessed_RemovedTrackloss.csv", row.names=TRUE) #save to computer
+write.csv(poo2, "Pinwheel14_1-17_Infant_Preprocessed.csv", row.names=TRUE) #save to 
 ```
 
 Filtering: following Fawcett (2016)
